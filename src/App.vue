@@ -43,33 +43,71 @@
       @cancel="documentStore.confirmDialogConfig.onCancel?.()"
     />
 
-    <!-- 保存对话框 -->
-    <SaveDialog
-      v-if="documentStore.showSaveDialog"
-      :filename="documentStore.saveFilename"
-      @update:filename="documentStore.saveFilename = $event"
-      @confirm="doSave"
-      @cancel="documentStore.closeSaveDialog()"
+    <!-- SaveDialog removed - we now use system file picker directly -->
+
+    <!-- 未保存提醒对话框 -->
+    <UnsavedDialog
+      v-if="documentStore.showUnsavedDialog"
+      :title="documentStore.unsavedDialogConfig.title"
+      :message="documentStore.unsavedDialogConfig.message"
+      @save="documentStore.unsavedDialogConfig.onSave?.()"
+      @discard="documentStore.unsavedDialogConfig.onDiscard?.()"
+      @cancel="documentStore.unsavedDialogConfig.onCancel?.()"
     />
   </div>
 </template>
 
 <script setup>
-import { ref, watch } from 'vue'
+import { ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useDocumentStore } from '@/stores/document'
 import Editor from '@/components/Editor/Editor.vue'
 import Toolbar from '@/components/Toolbar/Toolbar.vue'
 import Sidebar from '@/components/Sidebar/Sidebar.vue'
 import ConfirmDialog from '@/components/Dialogs/ConfirmDialog.vue'
-import SaveDialog from '@/components/Dialogs/SaveDialog.vue'
+import UnsavedDialog from '@/components/Dialogs/UnsavedDialog.vue'
 import { renderMarkdown } from '@/utils/markdown'
 import { setupScrollSync } from '@/utils/scrollSync'
+import { exportDocument } from '@/utils/export'
 
 const documentStore = useDocumentStore()
 const sidebarRef = ref(null)
 const editorRef = ref(null)
 const previewRef = ref(null)
 const previewHtml = ref('')
+
+// Track unsaved changes for beforeunload event
+const hasUnsavedChanges = ref(false)
+
+// Flag to disable scroll sync during navigation
+const isNavigating = ref(false)
+
+// CRITICAL: Watch content changes to mark document as dirty
+// When user edits in the editor, content changes directly but isDirty needs to be updated
+watch(() => documentStore.content, (newContent, oldContent) => {
+  // Mark as dirty when content changes from user input
+  // Only set dirty if oldContent exists (not initial load) and content actually changed
+  if (oldContent !== undefined && newContent !== oldContent) {
+    documentStore.isDirty = true
+  }
+  hasUnsavedChanges.value = documentStore.isDirty
+})
+
+// Handle beforeunload event
+const handleBeforeUnload = (event) => {
+  if (hasUnsavedChanges.value) {
+    event.preventDefault()
+    event.returnValue = '' // Chrome requires this
+    return ''
+  }
+}
+
+onMounted(() => {
+  window.addEventListener('beforeunload', handleBeforeUnload)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('beforeunload', handleBeforeUnload)
+})
 
 const scrollSync = setupScrollSync(
   (ratio) => {
@@ -92,10 +130,14 @@ function onEditorReady() {
 }
 
 function onEditorScroll(scrollInfo) {
+  // Skip scroll sync during navigation
+  if (isNavigating.value) return
   scrollSync.onEditorScroll(scrollInfo)
 }
 
 function onPreviewScroll(event) {
+  // Skip scroll sync during navigation
+  if (isNavigating.value) return
   scrollSync.onPreviewScroll({
     scrollTop: event.target.scrollTop,
     scrollHeight: event.target.scrollHeight,
@@ -134,43 +176,144 @@ function handleToolbarAction(event) {
 }
 
 function handleNavigate(item) {
+  // Set flag to disable scroll sync during navigation
+  isNavigating.value = true
+
+  // Scroll editor to the line
   if (editorRef.value) {
-    editorRef.value.scrollToLine(item.line)
+    editorRef.value.scrollToLineAndScrollToTop(item.line)
     editorRef.value.focus()
   }
 
-  setTimeout(() => {
-    const targetEl = previewRef.value?.querySelector(`#${item.id}`)
-    if (targetEl) {
-      targetEl.scrollIntoView({ behavior: 'smooth' })
-    }
-  }, 100)
+  // Scroll preview to the heading
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      const targetEl = previewRef.value?.querySelector(`#${item.id}`)
+
+      if (targetEl) {
+        // Use getBoundingClientRect for accurate position calculation
+        const previewContainer = previewRef.value
+        const containerRect = previewContainer.getBoundingClientRect()
+        const elementRect = targetEl.getBoundingClientRect()
+
+        // Calculate the scroll position needed to put the element at the top
+        const targetScrollTop = elementRect.top - containerRect.top + previewContainer.scrollTop
+        previewContainer.scrollTop = targetScrollTop
+      } else {
+        // Fallback: try to find by heading text if ID doesn't work
+        const headings = previewRef.value?.querySelectorAll('h1, h2, h3, h4, h5, h6')
+
+        if (headings) {
+          for (const heading of headings) {
+            if (heading.textContent.trim() === item.text) {
+              const previewContainer = previewRef.value
+              const containerRect = previewContainer.getBoundingClientRect()
+              const elementRect = heading.getBoundingClientRect()
+              previewContainer.scrollTop = elementRect.top - containerRect.top + previewContainer.scrollTop
+              break
+            }
+          }
+        }
+      }
+
+      // Re-enable scroll sync after a short delay
+      setTimeout(() => {
+        isNavigating.value = false
+      }, 300)
+    })
+  })
 }
 
 async function handleNew() {
   if (documentStore.isDirty) {
-    const confirmed = await documentStore.confirm('当前文档未保存，是否继续新建？')
-    if (!confirmed) return
+    // Show unsaved warning dialog - the callbacks handle the actual action
+    await documentStore.showUnsavedPrompt({
+      onSave: async () => {
+        // Save first, then create new document
+        await saveDocumentDirectly()
+        documentStore.newDocument()
+        updatePreview()
+      },
+      onDiscard: () => {
+        // Discard changes and create new document
+        documentStore.newDocument()
+        updatePreview()
+      },
+      onCancel: () => {
+        // Stay on current document - do nothing
+      }
+    })
+  } else {
+    documentStore.newDocument()
+    updatePreview()
   }
-  documentStore.newDocument()
-  updatePreview()
 }
 
 async function handleOpen() {
   if (documentStore.isDirty) {
-    const confirmed = await documentStore.confirm('当前文档未保存，是否继续打开？')
-    if (!confirmed) return
+    // Show unsaved warning dialog - the callbacks handle the actual action
+    await documentStore.showUnsavedPrompt({
+      onSave: async () => {
+        // Save first, then open file
+        await saveDocumentDirectly()
+        await openFileWithPicker()
+      },
+      onDiscard: () => {
+        // Discard changes and open file
+        openFileWithPicker()
+      },
+      onCancel: () => {
+        // Stay on current document - do nothing
+      }
+    })
+  } else {
+    await openFileWithPicker()
+  }
+}
+
+async function openFileWithPicker() {
+  // Try to use File System Access API first
+  if ('showOpenFilePicker' in window) {
+    try {
+      const [handle] = await window.showOpenFilePicker({
+        types: [
+          {
+            description: 'Markdown Files',
+            accept: { 'text/markdown': ['.md', '.txt'] }
+          }
+        ],
+        multiple: false
+      })
+      const file = await handle.getFile()
+      const content = await file.text()
+      // Clean content (remove BOM and other invisible characters)
+      const cleaned = cleanContent(content)
+      documentStore.loadDocument(cleaned, file.name)
+      updatePreview()
+      return
+    } catch (err) {
+      // User cancelled or error occurred
+      if (err.name === 'AbortError') return
+      console.warn('File System Access API failed, falling back to input element:', err)
+    }
   }
 
+  // Fallback to traditional file input
+  triggerFileOpen()
+}
+
+function triggerFileOpen() {
   const input = document.createElement('input')
   input.type = 'file'
-  input.accept = '.md'
+  input.accept = '.md,.txt'
   input.onchange = (e) => {
     const file = e.target.files[0]
     if (file) {
       const reader = new FileReader()
       reader.onload = (event) => {
-        documentStore.loadDocument(event.target.result, file.name)
+        // Clean content (remove BOM and other invisible characters)
+        const content = cleanContent(event.target.result)
+        documentStore.loadDocument(content, file.name)
         updatePreview()
       }
       reader.readAsText(file)
@@ -179,28 +322,70 @@ async function handleOpen() {
   input.click()
 }
 
-async function handleSave() {
-  documentStore.openSaveDialog(documentStore.documentName)
-}
+// Clean content by removing BOM and other invisible characters
+function cleanContent(content) {
+  if (!content) return content
 
-function doSave() {
-  const content = documentStore.content
-  let filename = documentStore.saveFilename
+  let clean = content
 
-  if (!filename.endsWith('.md')) {
-    filename += '.md'
+  // BOM (Byte Order Mark) is U+FEFF (decimal 65279, hex 0xFEFF)
+  // JavaScript's charCodeAt returns the Unicode code point
+  const firstCharCode = clean.charCodeAt(0)
+
+  // Check for BOM character (U+FEFF = 65279 = 0xFEFF)
+  if (firstCharCode === 65279 || firstCharCode === 0xFEFF) {
+    clean = clean.substring(1)
   }
 
-  const blob = new Blob([content], { type: 'text/markdown' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  a.click()
-  URL.revokeObjectURL(url)
+  // As a backup, check and remove BOM using String.fromCharCode
+  const bomChar = String.fromCharCode(65279) // U+FEFF ZERO WIDTH NO-BREAK SPACE
+  if (clean.startsWith(bomChar)) {
+    clean = clean.substring(1)
+  }
 
-  documentStore.markSaved()
-  documentStore.closeSaveDialog()
+  // Remove zero-width characters at start using their code points:
+  // U+200B (8203) - Zero Width Space
+  // U+200C (8204) - Zero Width Non-Joiner
+  // U+200D (8205) - Zero Width Joiner
+  // U+200E (8206) - Left-to-Right Mark
+  // U+200F (8207) - Right-to-Left Mark
+  // U+FEFF (65279) - Zero Width No-Break Space (BOM)
+  while (clean.length > 0) {
+    const code = clean.charCodeAt(0)
+    if (code === 8203 || code === 8204 || code === 8205 ||
+        code === 8206 || code === 8207 || code === 65279) {
+      clean = clean.substring(1)
+    } else {
+      break
+    }
+  }
+
+  return clean
+}
+
+// Save document directly to system file picker (no intermediate dialog)
+async function saveDocumentDirectly() {
+  const content = documentStore.content
+  const filename = documentStore.documentName
+
+  try {
+    // Use the export function which already handles showSaveFilePicker
+    await exportDocument(content, filename, 'md')
+    documentStore.markSaved()
+    return true
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      // User cancelled
+      return false
+    }
+    console.error('Failed to save document:', error)
+    return false
+  }
+}
+
+async function handleSave() {
+  // Directly save using system file picker, no intermediate dialog
+  await saveDocumentDirectly()
 }
 </script>
 

@@ -17,8 +17,15 @@ export const useDocumentStore = defineStore('document', () => {
     onCancel: null
   })
 
-  const showSaveDialog = ref(false)
-  const saveFilename = ref('')
+  // 未保存提醒对话框
+  const showUnsavedDialog = ref(false)
+  const unsavedDialogConfig = ref({
+    title: '未保存的更改',
+    message: '当前文档有未保存的更改，要保存吗？',
+    onSave: null,
+    onDiscard: null,
+    onCancel: null
+  })
 
   // Computed
   const documentName = computed(() => {
@@ -83,17 +90,48 @@ export const useDocumentStore = defineStore('document', () => {
     })
   }
 
-  function openSaveDialog(defaultName = '') {
-    saveFilename.value = defaultName
-    showSaveDialog.value = true
-  }
-
-  function closeSaveDialog() {
-    showSaveDialog.value = false
-  }
-
   function closeConfirmDialog() {
     showConfirmDialog.value = false
+  }
+
+  // 未保存提醒对话框方法
+  function showUnsavedPrompt(callbacks) {
+    return new Promise((resolve) => {
+      // The handler that will be called when user clicks a button
+      const handleSave = async () => {
+        showUnsavedDialog.value = false
+        // First execute the callback (which may be async)
+        if (callbacks.onSave) {
+          await callbacks.onSave()
+        }
+        resolve('save')
+      }
+
+      const handleDiscard = () => {
+        showUnsavedDialog.value = false
+        if (callbacks.onDiscard) {
+          callbacks.onDiscard()
+        }
+        resolve('discard')
+      }
+
+      const handleCancel = () => {
+        showUnsavedDialog.value = false
+        if (callbacks.onCancel) {
+          callbacks.onCancel()
+        }
+        resolve('cancel')
+      }
+
+      unsavedDialogConfig.value = {
+        title: '未保存的更改',
+        message: '当前文档有未保存的更改，要保存吗？',
+        onSave: handleSave,
+        onDiscard: handleDiscard,
+        onCancel: handleCancel
+      }
+      showUnsavedDialog.value = true
+    })
   }
 
   return {
@@ -104,8 +142,8 @@ export const useDocumentStore = defineStore('document', () => {
     showSidebar,
     showConfirmDialog,
     confirmDialogConfig,
-    showSaveDialog,
-    saveFilename,
+    showUnsavedDialog,
+    unsavedDialogConfig,
     // Computed
     documentName,
     isEmpty,
@@ -117,8 +155,7 @@ export const useDocumentStore = defineStore('document', () => {
     loadDocument,
     toggleSidebar,
     confirm,
-    openSaveDialog,
-    closeSaveDialog,
-    closeConfirmDialog
+    closeConfirmDialog,
+    showUnsavedPrompt
   }
 })

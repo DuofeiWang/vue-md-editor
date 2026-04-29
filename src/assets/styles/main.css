@@ -144,13 +144,40 @@ html, body {
 .markdown-preview table {
   border-collapse: collapse;
   width: 100%;
+  max-width: 100%;
+  table-layout: auto;
   margin-bottom: 1em;
+  display: table;
+  overflow-x: auto;
 }
 
+/* 表格自适应：平衡图片和文本 */
 .markdown-preview table th,
 .markdown-preview table td {
-  padding: 6px 13px;
+  padding: 8px 12px;
   border: 1px solid #dfe2e5;
+  /* 允许文本换行，但保持合理的最小宽度 */
+  min-width: 50px;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+/* 表头保持不换行（通常较短）*/
+.markdown-preview table th {
+  white-space: nowrap;
+}
+
+/* 数据单元格允许换行 */
+.markdown-preview table td {
+  white-space: normal;
+}
+
+/* 对于包含换行内容的单元格，允许自动换行 */
+.markdown-preview table th br,
+.markdown-preview table td br {
+  display: block;
+  content: '';
+  margin-bottom: 0.3em;
 }
 
 .markdown-preview table th {
@@ -167,6 +194,18 @@ html, body {
   height: auto;
   display: block;
   margin: 1em 0;
+}
+
+/* 表格内的图片样式 */
+.markdown-preview table img {
+  margin: 0;
+  max-width: 100%;
+  height: auto;
+  display: inline-block;
+  vertical-align: middle;
+  /* 确保图片有合理的最小显示宽度 */
+  min-width: 100px;
+  object-fit: contain;
 }
 
 .markdown-preview hr {

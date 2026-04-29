@@ -15,7 +15,20 @@
             @input="$emit('update:filename', $event.target.value)"
             @keyup.enter="$emit('confirm')"
           />
-          <p class="form-hint">文件将保存为 .md 格式</p>
+
+          <label class="form-label form-label-top">导出格式</label>
+          <select
+            class="form-input"
+            :value="format"
+            @change="$emit('update:format', $event.target.value)"
+          >
+            <option value="md">Markdown (.md)</option>
+            <option value="txt">纯文本 (.txt)</option>
+            <option value="docx">Word 文档 (.docx)</option>
+            <option value="pdf">PDF 文档 (.pdf)</option>
+          </select>
+
+          <p class="form-hint">文件将保存为 {{ formatExtensions[format] }} 格式</p>
         </div>
         <div class="dialog-footer">
           <button class="btn btn-secondary" @click="$emit('cancel')">
@@ -37,12 +50,23 @@ const props = defineProps({
   filename: {
     type: String,
     required: true
+  },
+  format: {
+    type: String,
+    default: 'md'
   }
 })
 
-const emit = defineEmits(['update:filename', 'confirm', 'cancel'])
+const emit = defineEmits(['update:filename', 'update:format', 'confirm', 'cancel'])
 
 const inputRef = ref(null)
+
+const formatExtensions = {
+  md: '.md',
+  txt: '.txt',
+  docx: '.docx',
+  pdf: '.pdf'
+}
 
 watch(() => props.filename, () => {
   nextTick(() => {
@@ -51,6 +75,17 @@ watch(() => props.filename, () => {
       inputRef.value.select()
     }
   })
+})
+
+watch(() => props.format, (newFormat) => {
+  // Update filename extension when format changes
+  let baseName = props.filename
+  Object.values(formatExtensions).forEach(ext => {
+    if (baseName.endsWith(ext)) {
+      baseName = baseName.slice(0, -ext.length)
+    }
+  })
+  emit('update:filename', baseName + formatExtensions[newFormat])
 })
 </script>
 
@@ -97,6 +132,15 @@ watch(() => props.filename, () => {
   font-size: 14px;
   font-weight: 500;
   color: #333;
+}
+
+.form-label-top {
+  margin-top: 16px;
+}
+
+select.form-input {
+  cursor: pointer;
+  background-color: white;
 }
 
 .form-input {

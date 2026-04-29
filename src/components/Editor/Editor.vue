@@ -143,10 +143,50 @@ defineExpose({
 
   scrollToLine(line) {
     if (!view) return
-    const pos = view.state.doc.line(line).from
-    view.dispatch({
-      selection: { anchor: pos },
-      scrollIntoView: true
+    requestAnimationFrame(() => {
+      try {
+        const lineObj = view.state.doc.line(line)
+        const pos = lineObj.from
+        view.dispatch({
+          selection: { anchor: pos },
+          scrollIntoView: true
+        })
+      } catch (e) {
+        console.warn('[Editor] Failed to scroll to line:', line, e)
+      }
+    })
+  },
+
+  scrollToLineAndScrollToTop(line) {
+    if (!view) return
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        try {
+          const lineObj = view.state.doc.line(line)
+
+          // Move cursor to the line
+          view.dispatch({
+            selection: { anchor: lineObj.from },
+            scrollIntoView: true
+          })
+
+          // Get the scroller element
+          const scroller = view.dom.querySelector('.cm-scroller')
+          if (scroller) {
+            const linePos = view.coordsAtPos(lineObj.from)
+            const viewportRect = view.dom.getBoundingClientRect()
+
+            if (linePos) {
+              const lineTopInContent = scroller.scrollTop + (linePos.top - viewportRect.top)
+              const contentPaddingTop = 16
+
+              scroller.scrollTop = lineTopInContent - contentPaddingTop
+            }
+          }
+        } catch (e) {
+          console.warn('[Editor] Failed to scroll to line:', line, e)
+        }
+      })
     })
   }
 })

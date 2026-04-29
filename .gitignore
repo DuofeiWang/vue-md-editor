@@ -15,3 +15,18 @@ npm-debug.log*
 # OS files
 .DS_Store
 Thumbs.db
+
+# Debug and test files
+debug-*.html
+debug-*.js
+simple-test.html
+test-*.html
+test-*.js
+test-*.md
+
+# Claude memory files
+.claude/
+
+# User analysis files
+*分析结果.md
+*解难模式.png
