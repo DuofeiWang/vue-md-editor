@@ -197,17 +197,19 @@ export function renderMarkdown(markdown) {
     function renderCellContent(content) {
       if (!content) return ''
 
-      // 检查是否包含 <br>（可能是列表或分段内容）
-      const hasBr = content.includes('<br>')
+      // 检查是否包含 <br> 或 <br/>（可能是列表或分段内容）
+      const hasBr = content.includes('<br')
 
       if (hasBr) {
         // 先用 renderInline 处理每个段落的行内 markdown
-        const parts = content.split('<br>')
+        // 支持 <br> 和 <br/> 两种格式
+        const parts = content.split(/<br\s*\/?>/)
         const renderedParts = parts.map(part => {
           part = part.trim()
           if (part) {
-            // 检查是否是列表项格式
-            const listMatch = part.match(/^([-*+])\s+(.*)/)
+            // 检查是否是列表项格式（支持 - * + • 以及数字/字母标记）
+            // 支持：- * + • ● ○ ▪ ■ ◆ ◇ 以及 1、 1. 1) a) A) 等
+            const listMatch = part.match(/^([-*+•●○▪■◆◇]|[\d]+[、.)]|[a-zA-Z][、.)])\s+(.*)/)
             const orderedMatch = !listMatch && part.match(/^(\d+\.)\s+(.*)/)
 
             if (listMatch) {
@@ -227,7 +229,7 @@ export function renderMarkdown(markdown) {
           }
           return ''
         })
-        // 用 <br> 连接各部分
+        // 用 <br> 连接各部分（在 HTML 中统一使用 <br>）
         return renderedParts.filter(p => p).join('<br>')
       }
 
@@ -236,27 +238,74 @@ export function renderMarkdown(markdown) {
       return rendered
     }
 
-    // 构建 HTML 表格
-    let html = '<table>\n<thead>\n<tr>\n'
-    for (let i = 0; i < headerCells.length; i++) {
-      const align = alignments[i] ? ` style="text-align:${alignments[i]}"` : ''
-      const cellContent = renderCellContent(headerCells[i])
-      html += `<th${align}>${cellContent}</th>\n`
-    }
-    html += '</tr>\n</thead>\n<tbody>\n'
+    // 分析每一列是否包含图片，以及列的宽度需求
+    const columnHasImage = new Array(headerCells.length).fill(false)
+    const columnMaxLength = new Array(headerCells.length).fill(0)
 
+    // 分析函数：检查一行单元格
+    function analyzeRow(cells) {
+      for (let j = 0; j < cells.length && j < headerCells.length; j++) {
+        const cell = cells[j]
+        // 检查是否包含图片
+        if (cell.includes('![](') || cell.includes('<img')) {
+          columnHasImage[j] = true
+        }
+        // 计算文本长度
+        columnMaxLength[j] = Math.max(columnMaxLength[j], cell.length)
+      }
+    }
+
+    // 首先分析表头行
+    analyzeRow(headerCells)
+
+    // 然后检查数据行，分析列特征
     for (const line of dataLines) {
       const trimmed = line.trim()
       if (!trimmed.startsWith('|') || !trimmed.endsWith('|')) continue
       const cells = trimmed.slice(1, -1).split('|').map(c => c.trim())
-      html += '<tr>\n'
-      for (let j = 0; j < Math.max(cells.length, headerCells.length); j++) {
-        const align = alignments[j] ? ` style="text-align:${alignments[j]}"` : ''
-        const cellContent = renderCellContent(cells[j])
-        html += `<td${align}>${cellContent}</td>\n`
-      }
-      html += '</tr>\n'
+      analyzeRow(cells)
     }
+
+    // 构建 HTML 表格，不区分表头，全部使用 td，添加自适应样式
+    let html = '<table style="border-collapse:collapse;width:100%;table-layout:auto;">\n<tbody>\n'
+
+    // 渲染行函数
+    function renderRow(cells, isHeader = false) {
+      let rowHtml = '<tr>\n'
+      for (let j = 0; j < Math.max(cells.length, headerCells.length); j++) {
+        let cellStyle = ''
+        const align = alignments[j] ? `text-align:${alignments[j]}` : ''
+
+        // 如果列包含图片，设置最小宽度；否则设置最大宽度
+        if (columnHasImage[j]) {
+          // 图片列：设置合适的宽度范围
+          cellStyle = 'min-width:120px;max-width:350px;'
+        } else {
+          // 文本列：强制换行，限制最大宽度
+          cellStyle = 'max-width:350px;min-width:80px;word-wrap:break-word;overflow-wrap:break-word;white-space:normal;hyphens:auto;'
+        }
+
+        const styleAttr = align || cellStyle ? ` style="${align}${align ? ';' : ''}${cellStyle}"` : ''
+        const cellContent = renderCellContent(cells[j] || '')
+
+        // 全部使用 td 标签，不区分表头
+        rowHtml += `<td${styleAttr}>${cellContent}</td>\n`
+      }
+      rowHtml += '</tr>\n'
+      return rowHtml
+    }
+
+    // 渲染原表头行（作为普通数据行）
+    html += renderRow(headerCells, true)
+
+    // 渲染数据行
+    for (const line of dataLines) {
+      const trimmed = line.trim()
+      if (!trimmed.startsWith('|') || !trimmed.endsWith('|')) continue
+      const cells = trimmed.slice(1, -1).split('|').map(c => c.trim())
+      html += renderRow(cells, false)
+    }
+
     html += '</tbody>\n</table>\n'
     return html
   })
@@ -275,28 +324,30 @@ export function renderMarkdown(markdown) {
     const cells = table.querySelectorAll('td, th')
     cells.forEach(cell => {
       let content = cell.innerHTML || ''
-      const hasInlineMarkdown = content.includes('![') || content.includes('](') || content.includes('<br>')
+      const hasInlineMarkdown = content.includes('![') || content.includes('](') || content.includes('<br')
 
       if (hasInlineMarkdown) {
-        // 检查是否包含列表格式（- item 或 1. item）
-        if (content.includes('- ') || content.match(/\d+\.\s/)) {
-          // 处理带 <br> 的列表项
-          const lines = content.split('<br>')
+        // 检查是否包含列表格式（支持 - * + • 以及各种数字/字母标记）
+        const listPattern = /^[-*+•]|[\d]+[、.)]|[a-zA-Z][、.)]|●|○|▪|■|◆|◇/
+        if (content.match(listPattern)) {
+          // 处理带 <br> 或 <br/> 的列表项
+          const lines = content.split(/<br\s*\/?>/)
           const processedLines = lines.map(line => {
             line = line.trim()
             if (!line) return ''
 
-            // 检查是否是列表项
-            const listMatch = line.match(/^([-*+])\s+(.*)/)
+            // 检查是否是列表项（支持更多标记类型）
+            const listMatch = line.match(/^([-*+•]|●|○|▪|■|◆|◇|[\d]+[、.)]|[a-zA-Z][、.)])\s+(.*)/)
             const orderedMatch = !listMatch && line.match(/^(\d+\.)\s+(.*)/)
 
             if (listMatch) {
-              const itemContent = listMatch[1]
+              const marker = listMatch[1]
+              const itemContent = listMatch[2] || ''
               const rendered = md.renderInline(itemContent)
-              return `- ${rendered}`
+              return `${marker} ${rendered}`
             } else if (orderedMatch) {
-              const marker = orderedMatch[0].split(/\s/)[0] // 获取 "1." 或 "2." 等
-              const itemContent = orderedMatch[1]
+              const marker = orderedMatch[1]
+              const itemContent = orderedMatch[2]
               const rendered = md.renderInline(itemContent)
               return `${marker} ${rendered}`
             }
