@@ -166,7 +166,9 @@ turndownService.addRule('table', {
                 cellContent += turndownService.turndown(nodeChild.outerHTML).trim() + '<br>'
               }
             } else if (tagName === 'ul' || tagName === 'ol') {
-              cellContent += processListInTable(nodeChild)
+              // 处理列表，将换行符转换为 <br> 以在 HTML 表格中正确显示
+              const listContent = processListInTable(nodeChild)
+              cellContent += listContent.replace(/\n/g, '<br>') + '<br>'
             } else if (tagName === 'a') {
               // 链接可能包含图片，检查并处理
               const aImages = nodeChild.querySelectorAll('img')
@@ -259,7 +261,10 @@ function processCellContent(cell) {
       const tagName = nodeChild.nodeName.toLowerCase()
       console.log('[DEBUG] processCellContent - tagName:', tagName)
       if (tagName === 'ul' || tagName === 'ol') {
-        result += processListInTable(nodeChild)
+        // 处理列表，获取带换行的内容
+        const listContent = processListInTable(nodeChild)
+        // 将真正的换行符转换为 <br>，因为 Markdown 表格单元格不支持换行
+        result += listContent.replace(/\n/g, '<br>') + '<br>'
         hasList = true
       } else if (tagName === 'img') {
         // 直接处理图片标签
@@ -334,7 +339,7 @@ function processImageInCell(imgNode) {
   return alt || ''
 }
 
-// 处理表格内的列表 - 返回带 <br> 分隔的内容
+// 处理表格内的列表 - 返回带换行分隔的内容
 function processListInTable(listNode) {
   const isOrdered = listNode.nodeName === 'OL'
   const items = listNode.querySelectorAll(':scope > li')
@@ -361,6 +366,8 @@ function processListInTable(listNode) {
           } else {
             itemContent += turndownService.turndown(child.outerHTML)
           }
+        } else if (tagName === 'br') {
+          itemContent += ' '
         } else {
           itemContent += turndownService.turndown(child.outerHTML)
         }
@@ -371,12 +378,12 @@ function processListInTable(listNode) {
     itemContent = itemContent.trim().replace(/\|/g, '\\|')
 
     const prefix = isOrdered ? `${index + 1}. ` : '- '
-    const line = prefix + itemContent + '<br>'
+    const line = prefix + itemContent
     console.log('表格列表项:', line)
-    result += line
+    result += line + '\n'
   })
 
-  const finalResult = result.replace(/<br>$/, '')
+  const finalResult = result.trim()
   console.log('表格列表结果:', finalResult)
   return finalResult
 }
